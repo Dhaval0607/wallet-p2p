@@ -120,7 +120,12 @@
 
     var reqs = m.http_requests_total || [], total = sum(reqs);
     var errs = sum(reqs.filter(function (s) { return s.labels.status && s.labels.status[0] === '5'; }));
-    var all = (m.http_request_duration_seconds_bucket || []).map(function (s) { return { le: parseFloat(s.labels.le), count: s.value }; });
+    // /logs/stream is a long-lived SSE tail measured in minutes. Leaving it in
+    // the global aggregate makes the headline p99 a statement about how long
+    // someone kept a log viewer open, not about how fast money moves.
+    var all = (m.http_request_duration_seconds_bucket || [])
+      .filter(function (s) { return s.labels.route !== '/logs/stream'; })
+      .map(function (s) { return { le: parseFloat(s.labels.le), count: s.value }; });
     var byLe = {};
     all.forEach(function (b) { byLe[b.le] = (byLe[b.le] || 0) + b.count; });
     var global = Object.keys(byLe).map(function (le) { return { le: parseFloat(le), count: byLe[le] }; });
@@ -130,7 +135,7 @@
       card('in flight', fmt(sum(m.http_requests_in_flight))) +
       card('5xx', fmt(errs), errs ? 'bad' : 'ok') +
       card('error rate', total ? (100 * errs / total).toFixed(2) + ' %' : '0.00 %', errs ? 'bad' : 'ok') +
-      card('p99 latency (all)', ms(quantile(global, 0.99))) +
+      card('p99 latency (excl. stream)', ms(quantile(global, 0.99))) +
       card('db conns in use', fmt(sum(m.wallet_db_pool_acquired_conns)) + ' / ' + fmt(sum(m.wallet_db_pool_total_conns)));
 
     var routes = {};
