@@ -1,0 +1,22 @@
+# build output
+/bin/
+/out/
+walletd
+*.exe
+
+# local env
+.env
+.env.*
+!.env.example
+
+# editors
+.idea/
+.vscode/
+*.iml
+
+# os
+.DS_Store
+
+# the internal grading rubric and the exercise brief are not ours to publish
+01-wallet-transfer-RUBRIC.md
+R3-PREP.md
