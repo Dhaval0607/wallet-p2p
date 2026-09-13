@@ -1,15 +1,42 @@
 # wallet-p2p
 
+[![ci](https://github.com/Dhaval0607/wallet-p2p/actions/workflows/ci.yml/badge.svg)](https://github.com/Dhaval0607/wallet-p2p/actions/workflows/ci.yml)
+
 A small wallet service with peer-to-peer transfers, built so that the interesting
 properties hold **under concurrency and failure**, not just on the happy path.
 
 Money is integer paise everywhere. There is no float in this program.
 
-- **Design write-up:** [WRITEUP.md](WRITEUP.md) — data model, the deadlock I
-  shipped and then fixed, where idempotency lives, consistency-vs-availability.
-- **Live URL:** _see below_
-- **Live logs:** `<URL>/logs` · **Dashboard:** `<URL>/dashboard` · **Metrics:** `<URL>/metrics`
-- **Live invariant audit:** `<URL>/invariants`
+## Live
+
+| | |
+|---|---|
+| **API** | https://wallet-p2p-0bza.onrender.com |
+| **Live logs** (public, no login) | https://wallet-p2p-0bza.onrender.com/logs |
+| **Dashboard** | https://wallet-p2p-0bza.onrender.com/dashboard |
+| **Metrics** | https://wallet-p2p-0bza.onrender.com/metrics |
+| **Invariant audit** | https://wallet-p2p-0bza.onrender.com/invariants |
+| **Design write-up** | [WRITEUP.md](WRITEUP.md) |
+
+Reproduce every invariant against the live service in one command:
+
+```bash
+ADMIN_TOKEN=<token supplied with the submission> \
+  ./scripts/burst.sh https://wallet-p2p-0bza.onrender.com
+```
+
+That token gates `POST /admin/mint`, which is test funding only: it mints play
+money into a single wallet and cannot move money between wallets, so it cannot
+affect any invariant this service claims. It is kept out of the repo rather than
+published, since it is a live credential on a public instance.
+
+Everything else is open without it — `/invariants`, `/metrics`, `/logs` and the
+dashboard need no auth, and `make up && make burst` reproduces all three gates
+locally with no token at all.
+
+> The free instance sleeps after ~15 minutes idle and takes ~30-50s to wake. The
+> burst script waits on `/healthz` before it starts timing anything, so a cold
+> start shows up as a slow first request rather than a failure.
 
 ---
 

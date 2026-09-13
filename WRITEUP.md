@@ -2,6 +2,9 @@
 
 One page on what this is, why it is built the way it is, and what I gave up.
 
+**Live:** https://wallet-p2p-0bza.onrender.com | **Logs:** https://wallet-p2p-0bza.onrender.com/logs | **Invariants:** https://wallet-p2p-0bza.onrender.com/invariants
+**Repo:** https://github.com/Dhaval0607/wallet-p2p
+
 ---
 
 ## 1. Data model
