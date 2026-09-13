@@ -1,0 +1,153 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>wallet-p2p — dashboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: dark; --bg:#0b0e14; --card:#141922; --fg:#c5cdd9; --dim:#5c6773; --ok:#bae67e; --bad:#f07178; --warn:#ffcc66; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  h1 { font-size:15px; margin:0 0 4px; } h2 { font-size:12px; color:var(--dim); margin:20px 0 8px; text-transform:uppercase; letter-spacing:.08em; font-weight:600; }
+  .sub { color:var(--dim); margin-bottom:4px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }
+  .card { background:var(--card); border:1px solid #232a36; border-radius:6px; padding:11px 13px; }
+  .label { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .val { font-size:21px; margin-top:5px; font-variant-numeric:tabular-nums; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  table { border-collapse:collapse; width:100%; margin-top:4px; }
+  td,th { text-align:left; padding:4px 10px 4px 0; border-bottom:1px solid #1d2430; font-variant-numeric:tabular-nums; }
+  th { color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase; }
+  a { color:#73d0ff; }
+</style>
+<h1>wallet-p2p · live dashboard</h1>
+<div class="sub">refreshes every 2s from <a href="/metrics">/metrics</a> and <a href="/invariants">/invariants</a> · <a href="/logs">live logs →</a></div>
+
+<h2>Invariants</h2>
+<div class="grid" id="inv"></div>
+
+<h2>Domain counters</h2>
+<div class="grid" id="domain"></div>
+
+<h2>HTTP</h2>
+<div class="grid" id="http"></div>
+
+<h2>Latency by route</h2>
+<table id="lat"><thead><tr><th>route</th><th>count</th><th>p50</th><th>p95</th><th>p99</th></tr></thead><tbody></tbody></table>
+
+<script>
+(function () {
+  // Minimal Prometheus text-format parser -- enough for counters, gauges and
+  // histogram buckets. Avoids shipping a charting library for six numbers.
+  function parse(text) {
+    var out = {};
+    text.split('\n').forEach(function (line) {
+      if (!line || line[0] === '#') return;
+      var sp = line.lastIndexOf(' ');
+      if (sp < 0) return;
+      var key = line.slice(0, sp), val = parseFloat(line.slice(sp + 1));
+      if (isNaN(val)) return;
+      var br = key.indexOf('{'), name = br < 0 ? key : key.slice(0, br), labels = {};
+      if (br >= 0) {
+        key.slice(br + 1, key.lastIndexOf('}')).replace(/([a-zA-Z_]+)="((?:[^"\\]|\\.)*)"/g,
+          function (_, k, v) { labels[k] = v.replace(/\\"/g, '"'); return ''; });
+      }
+      (out[name] = out[name] || []).push({ labels: labels, value: val });
+    });
+    return out;
+  }
+
+  var sum = function (s) { return (s || []).reduce(function (a, b) { return a + b.value; }, 0); };
+  var fmt = function (n) { return (n === undefined || n === null || isNaN(n)) ? '–' : Number(n).toLocaleString(); };
+  var rupees = function (p) { return '₹' + (p / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+
+  function card(label, value, cls) {
+    return '<div class="card"><div class="label">' + label + '</div><div class="val ' + (cls || '') + '">' + value + '</div></div>';
+  }
+
+  // Linear interpolation inside the matching histogram bucket -- the same thing
+  // histogram_quantile() does, done client-side so there is no Prometheus to run.
+  function quantile(buckets, q) {
+    if (!buckets.length) return null;
+    buckets.sort(function (a, b) { return a.le - b.le; });
+    var total = buckets[buckets.length - 1].count;
+    if (!total) return null;
+    var target = q * total, prevLe = 0, prevCount = 0;
+    for (var i = 0; i < buckets.length; i++) {
+      var b = buckets[i];
+      if (b.count >= target) {
+        if (!isFinite(b.le)) return prevLe;
+        var span = b.count - prevCount;
+        return span ? prevLe + (b.le - prevLe) * ((target - prevCount) / span) : b.le;
+      }
+      prevLe = b.le; prevCount = b.count;
+    }
+    return null;
+  }
+
+  function ms(v) { return v === null ? '–' : (v * 1000).toFixed(1) + ' ms'; }
+
+  function outcome(m, name) {
+    return sum((m.wallet_transfers_total || []).filter(function (s) { return s.labels.outcome === name; }));
+  }
+
+  async function tick() {
+    var m, inv;
+    try {
+      var r = await Promise.all([fetch('/metrics'), fetch('/invariants')]);
+      m = parse(await r[0].text());
+      inv = await r[1].json();
+    } catch (e) { return; }
+
+    document.getElementById('inv').innerHTML =
+      card('all invariants', inv.all_invariants_hold ? 'HOLD' : 'BROKEN', inv.all_invariants_hold ? 'ok' : 'bad') +
+      card('conservation', inv.conservation_holds ? 'HOLD' : 'BROKEN', inv.conservation_holds ? 'ok' : 'bad') +
+      card('no overdraft', inv.no_overdraft_holds ? 'HOLD' : 'BROKEN', inv.no_overdraft_holds ? 'ok' : 'bad') +
+      card('total balance', rupees(inv.total_balance_paise)) +
+      card('total minted', rupees(inv.total_minted_paise)) +
+      card('ledger sum (must be 0)', fmt(inv.ledger_sum_paise), inv.ledger_sum_paise === 0 ? 'ok' : 'bad') +
+      card('negative balances', fmt(inv.negative_balance_wallets), inv.negative_balance_wallets === 0 ? 'ok' : 'bad') +
+      card('stuck pending', fmt(inv.transfers_stuck_pending), inv.transfers_stuck_pending === 0 ? 'ok' : 'bad') +
+      card('wallets', fmt(inv.wallet_count));
+
+    document.getElementById('domain').innerHTML =
+      card('transfers succeeded', fmt(outcome(m, 'succeeded')), 'ok') +
+      card('declined · insufficient funds', fmt(outcome(m, 'declined_insufficient_funds')), 'warn') +
+      card('idempotent replays', fmt(outcome(m, 'idempotent_replay'))) +
+      card('key conflicts (409)', fmt(outcome(m, 'idempotency_key_conflict')), 'warn') +
+      card('rejected · invalid', fmt(outcome(m, 'rejected_invalid'))) +
+      card('paise moved', rupees(sum(m.wallet_transferred_paise_total))) +
+      card('wallets created', fmt(sum(m.wallet_wallets_created_total))) +
+      card('get-or-create reuse', fmt(sum(m.wallet_wallets_reused_total))) +
+      card('db tx retries', fmt(sum(m.wallet_db_retries_total)), sum(m.wallet_db_retries_total) ? 'warn' : 'ok');
+
+    var reqs = m.http_requests_total || [], total = sum(reqs);
+    var errs = sum(reqs.filter(function (s) { return s.labels.status && s.labels.status[0] === '5'; }));
+    var all = (m.http_request_duration_seconds_bucket || []).map(function (s) { return { le: parseFloat(s.labels.le), count: s.value }; });
+    var byLe = {};
+    all.forEach(function (b) { byLe[b.le] = (byLe[b.le] || 0) + b.count; });
+    var global = Object.keys(byLe).map(function (le) { return { le: parseFloat(le), count: byLe[le] }; });
+
+    document.getElementById('http').innerHTML =
+      card('requests total', fmt(total)) +
+      card('in flight', fmt(sum(m.http_requests_in_flight))) +
+      card('5xx', fmt(errs), errs ? 'bad' : 'ok') +
+      card('error rate', total ? (100 * errs / total).toFixed(2) + ' %' : '0.00 %', errs ? 'bad' : 'ok') +
+      card('p99 latency (all)', ms(quantile(global, 0.99))) +
+      card('db conns in use', fmt(sum(m.wallet_db_pool_acquired_conns)) + ' / ' + fmt(sum(m.wallet_db_pool_total_conns)));
+
+    var routes = {};
+    (m.http_request_duration_seconds_bucket || []).forEach(function (s) {
+      var k = s.labels.method + ' ' + s.labels.route;
+      (routes[k] = routes[k] || []).push({ le: parseFloat(s.labels.le), count: s.value });
+    });
+    var counts = {};
+    (m.http_request_duration_seconds_count || []).forEach(function (s) { counts[s.labels.method + ' ' + s.labels.route] = s.value; });
+
+    document.querySelector('#lat tbody').innerHTML = Object.keys(routes).sort().map(function (k) {
+      var b = routes[k];
+      return '<tr><td>' + k + '</td><td>' + fmt(counts[k]) + '</td><td>' + ms(quantile(b, 0.5)) +
+             '</td><td>' + ms(quantile(b, 0.95)) + '</td><td>' + ms(quantile(b, 0.99)) + '</td></tr>';
+    }).join('') || '<tr><td colspan="5">no traffic yet</td></tr>';
+  }
+
+  tick(); setInterval(tick, 2000);
+})();
+</script>

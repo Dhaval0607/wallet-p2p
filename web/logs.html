@@ -1,0 +1,95 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>wallet-p2p — live logs</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: dark; --bg:#0b0e14; --fg:#c5cdd9; --dim:#5c6773; --hi:#1a1f29; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  header { position:sticky; top:0; background:var(--hi); padding:8px 12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; border-bottom:1px solid #2a3140; }
+  h1 { font-size:13px; margin:0; font-weight:600; }
+  input,select,button { background:#0b0e14; color:var(--fg); border:1px solid #2a3140; border-radius:4px; padding:4px 7px; font:inherit; }
+  #log { padding:8px 12px; }
+  .row { white-space:pre-wrap; word-break:break-word; border-bottom:1px solid #161b24; padding:2px 0; }
+  .t { color:var(--dim); }
+  .ev { font-weight:600; }
+  .cid { color:#73d0ff; }
+  .kv { color:#95e6cb; }
+  .lvl-WARN .ev { color:#ffcc66; } .lvl-ERROR .ev { color:#f07178; } .lvl-INFO .ev { color:#bae67e; }
+  .pill { padding:1px 6px; border-radius:9px; background:#2a3140; color:var(--dim); }
+  #status.on { color:#bae67e; } #status.off { color:#f07178; }
+</style>
+<header>
+  <h1>wallet-p2p · live log stream</h1>
+  <span id="status" class="off">connecting…</span>
+  <input id="filter" placeholder="filter (substring or /regex/)" size="28">
+  <select id="evt">
+    <option value="">all events</option>
+    <option>transfer_created</option>
+    <option>transfer_succeeded</option>
+    <option>transfer_declined</option>
+    <option>idempotent_replay</option>
+    <option>idempotency_conflict</option>
+    <option>wallet_get_or_create</option>
+    <option>transfer_rejected</option>
+    <option>mint</option>
+    <option>http_request</option>
+  </select>
+  <label><input type="checkbox" id="tail" checked> follow</label>
+  <button id="clear">clear</button>
+  <span class="pill" id="count">0</span>
+</header>
+<div id="log"></div>
+<script>
+(function () {
+  var log = document.getElementById('log'), statusEl = document.getElementById('status'),
+      filterEl = document.getElementById('filter'), evtEl = document.getElementById('evt'),
+      tailEl = document.getElementById('tail'), countEl = document.getElementById('count'),
+      shown = 0, MAX_ROWS = 3000;
+
+  document.getElementById('clear').onclick = function () { log.textContent = ''; shown = 0; countEl.textContent = '0'; };
+
+  function matches(raw, rec) {
+    if (evtEl.value && rec.event !== evtEl.value) return false;
+    var f = filterEl.value.trim();
+    if (!f) return true;
+    if (f.length > 2 && f[0] === '/' && f[f.length - 1] === '/') {
+      try { return new RegExp(f.slice(1, -1), 'i').test(raw); } catch (e) { return true; }
+    }
+    return raw.toLowerCase().indexOf(f.toLowerCase()) !== -1;
+  }
+
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+
+  function render(raw) {
+    var rec; try { rec = JSON.parse(raw); } catch (e) { return; }
+    if (!matches(raw, rec)) return;
+
+    var skip = { time: 1, level: 1, msg: 1, event: 1, correlation_id: 1 }, parts = [];
+    for (var k in rec) if (!skip[k]) parts.push('<span class="kv">' + esc(k) + '</span>=' + esc(JSON.stringify(rec[k])));
+
+    var div = document.createElement('div');
+    div.className = 'row lvl-' + (rec.level || 'INFO');
+    div.innerHTML =
+      '<span class="t">' + esc((rec.time || '').slice(11, 23)) + '</span> ' +
+      '<span class="ev">' + esc(rec.event || rec.msg || '-') + '</span> ' +
+      (rec.correlation_id ? '<span class="cid">' + esc(rec.correlation_id) + '</span> ' : '') +
+      parts.join(' ');
+    log.appendChild(div);
+
+    if (++shown > MAX_ROWS) { log.removeChild(log.firstChild); shown--; }
+    countEl.textContent = shown;
+    if (tailEl.checked) window.scrollTo(0, document.body.scrollHeight);
+  }
+
+  function connect() {
+    var es = new EventSource('/logs/stream');
+    es.onopen = function () { statusEl.textContent = 'streaming'; statusEl.className = 'on'; };
+    es.onmessage = function (e) { render(e.data); };
+    es.onerror = function () {
+      statusEl.textContent = 'reconnecting…'; statusEl.className = 'off';
+      es.close(); setTimeout(connect, 2000);
+    };
+  }
+  connect();
+})();
+</script>
